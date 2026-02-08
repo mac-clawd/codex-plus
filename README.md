@@ -39,6 +39,8 @@ Use ChatGPT Pro/Max, Claude Max, etc. directly in Cursor via an MCP-managed Open
 
 If you already have the official `codex` CLI installed and logged in (`codex login status`), you can run the proxy in `codex-cli` mode. In this mode, `/v1/chat/completions` is served by spawning `codex exec` locally.
 
+Security note: keep this mode on `localhost` only. Don’t expose it via a public tunnel unless you fully understand the risk (Codex CLI can execute commands depending on its sandbox settings).
+
 1. Login once: `codex login` (verify: `codex login status`)
 2. Start the server with `OPENAI_BACKEND=codex-cli`
 3. In Cursor Settings → Models → API Keys:
