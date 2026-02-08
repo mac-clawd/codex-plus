@@ -22,8 +22,8 @@ const log = (...args: Parameters<typeof console.error>) => console.error(...args
 
 async function main() {
   const prog = program
-    .name('sub-bridge')
-    .description('MCP bridge for ChatGPT Pro, Claude Max, etc. in Cursor')
+    .name('codex-plus')
+    .description('Sub Bridge fork for Cursor (includes optional local Codex CLI backend)')
   
   addSharedOptions(prog)
     .option('--server-only', 'Run HTTP server only (no MCP)')
@@ -44,10 +44,10 @@ async function main() {
     const discovery = await findPort(config.port)
 
     if (discovery.hasServer) {
-      log(`[sub-bridge] Found existing HTTP server on port ${discovery.port}`)
+      log(`[codex-plus] Found existing HTTP server on port ${discovery.port}`)
       await startMcpServer(discovery.port, log)
     } else {
-      log(`[sub-bridge] No HTTP server found, starting inline on port ${discovery.port}`)
+      log(`[codex-plus] No HTTP server found, starting inline on port ${discovery.port}`)
       const server = await startServer({ ...config, port: discovery.port })
       await startMcpServer(server.port, log)
     }
@@ -79,6 +79,6 @@ function printSetupInstructions(publicUrl: string) {
 }
 
 main().catch((error) => {
-  log('[sub-bridge] Fatal error:', error)
+  log('[codex-plus] Fatal error:', error)
   process.exit(1)
 })

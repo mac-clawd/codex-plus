@@ -23,18 +23,20 @@ export function truncate(str: string, maxLen: number): string {
 }
 
 export function logRequest(
-  route: 'claude' | 'openai' | 'chatgpt' | 'bypass',
+  route: 'claude' | 'openai' | 'chatgpt' | 'codex-cli' | 'bypass',
   model: string,
   data: {
     system?: string
     messages?: any[]
     tools?: any[]
     tokens?: number
+    // Allow route-specific metadata without bloating the core signature.
+    [key: string]: any
   }
 ) {
   requestCounter++
-  const routeColors = { claude: chalk.cyan, openai: chalk.yellow, chatgpt: chalk.green, bypass: chalk.gray }
-  const routeLabels = { claude: 'Claude', openai: 'OpenAI', chatgpt: 'ChatGPT', bypass: 'Bypass' }
+  const routeColors = { claude: chalk.cyan, openai: chalk.yellow, chatgpt: chalk.green, 'codex-cli': chalk.magenta, bypass: chalk.gray }
+  const routeLabels = { claude: 'Claude', openai: 'OpenAI', chatgpt: 'ChatGPT', 'codex-cli': 'Codex CLI', bypass: 'Bypass' }
   const roleColors: Record<string, typeof chalk.blue> = {
     user: chalk.blue, assistant: chalk.green, system: chalk.magenta, tool: chalk.yellow
   }

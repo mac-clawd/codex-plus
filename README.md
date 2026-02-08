@@ -1,4 +1,6 @@
-# Sub Bridge
+# Codex+
+
+Fork of Sub Bridge with an optional local Codex CLI backend.
 
 Use ChatGPT Pro/Max, Claude Max, etc. directly in Cursor via an MCP-managed OpenAI-compatible proxy.
 
@@ -32,6 +34,24 @@ Use ChatGPT Pro/Max, Claude Max, etc. directly in Cursor via an MCP-managed Open
     <td align="center"><img src="public/assets/chat.png" alt="Use the generated key in Cursor" width="360"></td>
   </tr>
 </table>
+
+## Codex CLI backend (optional)
+
+If you already have the official `codex` CLI installed and logged in (`codex login status`), you can run the proxy in `codex-cli` mode. In this mode, `/v1/chat/completions` is served by spawning `codex exec` locally.
+
+1. Login once: `codex login` (verify: `codex login status`)
+2. Start the server with `OPENAI_BACKEND=codex-cli`
+3. In Cursor Settings → Models → API Keys:
+   - Base URL: `http://localhost:<port>/v1`
+   - API Key: `codex-cli`
+   - Model: `gpt-5.2-codex` (or any; Codex CLI will pick its default unless `CODEX_CLI_MODEL` is set)
+
+Optional env vars:
+
+- `CODEX_CLI_WORKDIR`: working directory passed to `codex exec -C` (default: current working dir)
+- `CODEX_CLI_SANDBOX`: `read-only` (default), `workspace-write`, `danger-full-access`
+- `CODEX_CLI_TIMEOUT_MS`: default `300000`
+- `CODEX_CLI_MODEL`: force a specific Codex model
 
 ## How it works
 

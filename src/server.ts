@@ -165,7 +165,7 @@ export async function startServer(config: ServerConfig): Promise<StartedServer> 
         : `http://localhost:${info.port}`
 
       log()
-      log(chalk.bold.cyan('  Sub Bridge OpenAI API Gateway and MCP Server'))
+      log(chalk.bold.cyan('  Codex+ OpenAI API Gateway and MCP Server'))
       log(chalk.dim('  ─────────────────────────────────────'))
       log()
       log(' ', chalk.green(publicUrl))
@@ -207,7 +207,7 @@ async function main() {
 const isMainModule = process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.js')
 if (isMainModule) {
   main().catch((error) => {
-    log('[sub-bridge] Fatal error:', error)
+    log('[codex-plus] Fatal error:', error)
     process.exit(1)
   })
 }

@@ -1,10 +1,10 @@
 {
-  "name": "sub-bridge",
+  "name": "codex-plus",
   "version": "1.0.0",
-  "description": "MCP bridge to use ChatGPT Pro, Claude Max, etc. in Cursor via an OpenAI-compatible proxy",
+  "description": "Sub Bridge fork: use ChatGPT Pro/Max, Claude Max, etc. in Cursor via an OpenAI-compatible proxy (plus optional local Codex CLI backend)",
   "main": "dist/cli.js",
   "bin": {
-    "sub-bridge": "dist/cli.js"
+    "codex-plus": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
@@ -36,7 +36,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/buremba/sub-bridge"
+    "url": "https://github.com/mac-clawd/codex-plus"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.7",

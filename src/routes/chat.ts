@@ -19,6 +19,7 @@ import { getChatGptInstructions } from '../utils/chatgpt-instructions'
 import { convertToResponsesFormat } from '../utils/chat-to-responses'
 import { decodeAccessToken } from '../oauth/crypto'
 import { refreshClaudeToken } from '../auth/provider'
+import { runCodexCli, type CodexCliSandbox } from '../utils/codex-cli-backend'
 import {
   estimateRequestTokens,
   truncateMessages,
@@ -75,6 +76,16 @@ interface OAuthTokens {
 
 const CHATGPT_BASE_URL = process.env.CHATGPT_BASE_URL || 'https://chatgpt.com/backend-api/codex'
 const CHATGPT_DEFAULT_MODEL = process.env.CHATGPT_DEFAULT_MODEL || 'gpt-5.2-codex'
+
+// Backend selection for non-Claude requests:
+// - auto (default): OpenAI key → OpenAI API, JWT/account_id → ChatGPT backend
+// - codex-cli: spawn local `codex exec` and return an OpenAI-compatible response
+const OPENAI_BACKEND = (process.env.OPENAI_BACKEND || 'auto').toLowerCase()
+
+const CODEX_CLI_WORKDIR = process.env.CODEX_CLI_WORKDIR || process.cwd()
+const CODEX_CLI_SANDBOX = (process.env.CODEX_CLI_SANDBOX || 'read-only') as CodexCliSandbox
+const CODEX_CLI_TIMEOUT_MS = parseInt(process.env.CODEX_CLI_TIMEOUT_MS || '', 10) || 5 * 60_000
+const CODEX_CLI_MODEL = process.env.CODEX_CLI_MODEL || ''
 
 function splitProviderTokens(fullToken: string): string[] {
   if (!fullToken) return []
@@ -141,12 +152,115 @@ function isSubBridgeToken(token: string): boolean {
   return token.startsWith('sb1.')
 }
 
+function isCodexCliSentinelKey(token: string | undefined): boolean {
+  if (!token) return false
+  const t = token.trim().toLowerCase()
+  return t === 'codex' || t === 'codex-cli' || t === 'codex-plus' || t === 'codex+'
+}
+
 function normalizeChatGptModel(requestedModel: string): string {
   if (!requestedModel) return CHATGPT_DEFAULT_MODEL
   if (requestedModel.includes('codex')) return requestedModel
   if (requestedModel.startsWith('gpt-5.2')) return CHATGPT_DEFAULT_MODEL
   if (requestedModel.startsWith('gpt-5')) return CHATGPT_DEFAULT_MODEL
   return CHATGPT_DEFAULT_MODEL
+}
+
+function messageContentToText(content: any): string {
+  if (content == null) return ''
+  if (typeof content === 'string') return content
+
+  if (Array.isArray(content)) {
+    const parts: string[] = []
+    for (const block of content) {
+      if (block == null) continue
+      if (typeof block === 'string') {
+        parts.push(block)
+        continue
+      }
+      if (typeof block !== 'object') {
+        parts.push(String(block))
+        continue
+      }
+
+      const type = (block as any).type
+      if ((type === 'text' || type === 'input_text' || type === 'output_text') && typeof (block as any).text === 'string') {
+        parts.push((block as any).text)
+        continue
+      }
+
+      if (type === 'image_url') {
+        const url = typeof (block as any).image_url === 'string'
+          ? (block as any).image_url
+          : (block as any).image_url?.url
+        parts.push(url ? `[image: ${url}]` : '[image]')
+        continue
+      }
+
+      // Best-effort fallback for unknown blocks.
+      try {
+        parts.push(JSON.stringify(block))
+      } catch {
+        parts.push(String(block))
+      }
+    }
+    return parts.join('\n')
+  }
+
+  try {
+    return JSON.stringify(content)
+  } catch {
+    return String(content)
+  }
+}
+
+function buildCodexCliPrompt(body: any): string {
+  let messages: any[] = Array.isArray(body.messages) ? body.messages : []
+  if (messages.length === 0 && body.input !== undefined) {
+    if (typeof body.input === 'string') messages = [{ role: 'user', content: body.input }]
+    else if (Array.isArray(body.input)) messages = body.input
+  }
+
+  const lines: string[] = []
+
+  // Preserve system messages up-front; Codex CLI will still apply its own internal system prompt.
+  const systemMessages = messages.filter((m) => m?.role === 'system')
+  if (systemMessages.length > 0) {
+    lines.push('System:')
+    for (const m of systemMessages) {
+      const text = messageContentToText(m?.content)
+      if (text.trim()) lines.push(text.trimEnd())
+    }
+    lines.push('')
+  }
+
+  // Render the rest of the conversation with explicit role tags.
+  const convo = messages.filter((m) => m?.role !== 'system')
+  for (const m of convo) {
+    const role = String(m?.role || 'user').toUpperCase()
+
+    // Tool/function call metadata (Cursor / OpenAI chat format)
+    if (role === 'ASSISTANT' && Array.isArray(m?.tool_calls) && m.tool_calls.length > 0) {
+      lines.push('ASSISTANT (tool_calls):')
+      for (const tc of m.tool_calls) {
+        const name = tc?.function?.name || tc?.name || 'unknown'
+        const args = tc?.function?.arguments || tc?.arguments || ''
+        lines.push(`${name}(${typeof args === 'string' ? args : JSON.stringify(args)})`)
+      }
+      lines.push('')
+      continue
+    }
+
+    const text = messageContentToText(m?.content)
+    if (!text.trim()) continue
+    lines.push(`${role}:`)
+    lines.push(text.trimEnd())
+    lines.push('')
+  }
+
+  // Nudge Codex CLI to respond as the assistant.
+  lines.push('ASSISTANT:')
+  return lines.join('\n')
 }
 
 /**
@@ -833,6 +947,109 @@ async function handleChatGptProxy(
   })
 }
 
+async function handleCodexCliProxy(
+  c: Context,
+  body: any,
+  requestedModel: string,
+  isStreaming: boolean,
+) {
+  const codexModel = CODEX_CLI_MODEL || (requestedModel.includes('codex') ? requestedModel : CHATGPT_DEFAULT_MODEL)
+  const prompt = buildCodexCliPrompt(body)
+
+  logRequest('codex-cli', `${requestedModel} → ${codexModel}`, {
+    cwd: CODEX_CLI_WORKDIR,
+    sandbox: CODEX_CLI_SANDBOX,
+    promptPreview: prompt.slice(0, 4000),
+  })
+
+  let resultText = ''
+  let usage: any = null
+  try {
+    const res = await runCodexCli(prompt, {
+      cwd: CODEX_CLI_WORKDIR,
+      sandbox: CODEX_CLI_SANDBOX,
+      timeoutMs: CODEX_CLI_TIMEOUT_MS,
+      model: CODEX_CLI_MODEL || (requestedModel.includes('codex') ? requestedModel : undefined),
+    })
+    resultText = res.text || ''
+    usage = res.usage || null
+  } catch (err: any) {
+    const msg = typeof err?.message === 'string' ? err.message : String(err)
+    logError(`Codex CLI error: ${msg.slice(0, 500)}`)
+    return c.json({
+      error: {
+        message: `Codex CLI backend failed: ${msg}`,
+        type: 'api_error',
+        code: 'codex_cli_error',
+      }
+    }, 500)
+  }
+
+  logResponse(200)
+
+  const created = Math.floor(Date.now() / 1000)
+  const id = `chatcmpl-${Date.now().toString(36)}`
+
+  const promptTokens = usage?.input_tokens ?? 0
+  const completionTokens = usage?.output_tokens ?? 0
+  const totalTokens = (usage?.total_tokens ?? (promptTokens + completionTokens)) || 0
+  const mappedUsage = {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
+  }
+
+  if (isStreaming) {
+    return stream(c, async (s) => {
+      // 1) role chunk
+      await s.write(`data: ${JSON.stringify({
+        id,
+        object: 'chat.completion.chunk',
+        created,
+        model: codexModel,
+        choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+      })}\n\n`)
+
+      // 2) content chunk (single shot; Codex CLI doesn't stream deltas)
+      await s.write(`data: ${JSON.stringify({
+        id,
+        object: 'chat.completion.chunk',
+        created,
+        model: codexModel,
+        choices: [{ index: 0, delta: { content: resultText }, finish_reason: null }],
+      })}\n\n`)
+
+      // 3) final chunk with usage
+      await s.write(`data: ${JSON.stringify({
+        id,
+        object: 'chat.completion.chunk',
+        created,
+        model: codexModel,
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        usage: mappedUsage,
+      })}\n\n`)
+
+      await s.write('data: [DONE]\n\n')
+    })
+  }
+
+  return c.json({
+    id,
+    object: 'chat.completion',
+    created,
+    model: codexModel,
+    choices: [{
+      index: 0,
+      message: {
+        role: 'assistant',
+        content: resultText || null,
+      },
+      finish_reason: 'stop',
+    }],
+    usage: mappedUsage,
+  })
+}
+
 async function handleChatCompletion(c: Context) {
   const body = await c.req.json()
   const requestedModel = body.model || ''
@@ -877,6 +1094,11 @@ async function handleChatCompletion(c: Context) {
 
   // If not a Claude model and we have a default key, proxy to OpenAI or ChatGPT backend
   if (!isClaude) {
+    const useCodexCli = OPENAI_BACKEND === 'codex-cli' || isCodexCliSentinelKey(parsedKeys.defaultKey)
+    if (useCodexCli) {
+      return handleCodexCliProxy(c, body, requestedModel, isStreaming)
+    }
+
     if (parsedKeys.defaultKey) {
       const tokenInfo: TokenInfo = {
         token: parsedKeys.defaultKey,
@@ -903,6 +1125,7 @@ async function handleChatCompletion(c: Context) {
 1. Add a model mapping to your API key: o3=opus-4.5:sk-ant-xxx
 2. Add a default API key for OpenAI/ChatGPT fallback
 3. Login via Sub Bridge OAuth to use your Claude/ChatGPT subscription
+4. Use Codex CLI as backend: set OPENAI_BACKEND=codex-cli (or set API key to "codex-cli")
 
 See https://github.com/buremba/sub-bridge for setup instructions.`
 
@@ -1129,15 +1352,35 @@ export function createChatRoutes() {
 
   // Models endpoint
   app.get('/models', async (c) => {
-    const response = await fetch('https://models.dev/api.json')
-    if (!response.ok) return c.json({ object: 'list', data: [] })
-    const modelsData = await response.json() as any
-    const anthropicModels = modelsData.anthropic?.models || {}
-    const models = Object.entries(anthropicModels).map(([modelId, modelData]: [string, any]) => ({
-      id: modelId, object: 'model' as const,
-      created: Math.floor(new Date(modelData.release_date || '1970-01-01').getTime() / 1000),
-      owned_by: 'anthropic',
-    }))
+    const models: Array<{ id: string; object: 'model'; created: number; owned_by: string }> = []
+
+    // Always include the Codex model for OpenAI-compatible backends.
+    models.push({
+      id: CHATGPT_DEFAULT_MODEL,
+      object: 'model' as const,
+      created: Math.floor(new Date('2025-01-01').getTime() / 1000),
+      owned_by: 'openai',
+    })
+
+    // Best-effort: include Anthropic models (used for routing).
+    try {
+      const response = await fetch('https://models.dev/api.json')
+      if (response.ok) {
+        const modelsData = await response.json() as any
+        const anthropicModels = modelsData.anthropic?.models || {}
+        for (const [modelId, modelData] of Object.entries(anthropicModels) as Array<[string, any]>) {
+          models.push({
+            id: modelId,
+            object: 'model' as const,
+            created: Math.floor(new Date(modelData.release_date || '1970-01-01').getTime() / 1000),
+            owned_by: 'anthropic',
+          })
+        }
+      }
+    } catch {
+      // Ignore models.dev outages; Codex model is still returned.
+    }
+
     return c.json({ object: 'list', data: models })
   })
 

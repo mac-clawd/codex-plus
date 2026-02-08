@@ -19,7 +19,7 @@ export function buildStatusText(options: StatusTextOptions): string {
 
   if (mode === 'server') {
     const lines = [
-      'Sub Bridge is running.',
+      'Codex+ is running.',
       '',
       `Setup URL: ${baseUrl}?to=cursor`,
       "Open this URL in your browser where you're logged into ChatGPT or Claude.",
@@ -32,6 +32,11 @@ export function buildStatusText(options: StatusTextOptions): string {
       `   - Set Base URL from the web UI`,
       '',
       ...MODEL_MAPPING_LINES,
+      '',
+      'Optional: Use local Codex CLI as the OpenAI backend (no OAuth token needed):',
+      `- Run: codex login (or verify: codex login status)`,
+      `- Start Codex+ with: OPENAI_BACKEND=codex-cli`,
+      `- In Cursor: set Base URL to ${baseUrlForV1}/v1 and API key to "codex-cli"`,
     ]
 
     if (options.isLocalOnly && !options.tunnelActive) {
@@ -43,7 +48,7 @@ export function buildStatusText(options: StatusTextOptions): string {
   }
 
   return [
-    'Sub Bridge server not reachable.',
+    'Codex+ server not reachable.',
     '',
     'To set up:',
     `1. Open ${baseUrl}?to=cursor in your browser where you're logged into ChatGPT or Claude`,
@@ -51,6 +56,11 @@ export function buildStatusText(options: StatusTextOptions): string {
     `3. In Cursor: Settings → Models → API Keys, paste the key and set Base URL from the web UI`,
     '',
     ...MODEL_MAPPING_LINES,
+    '',
+    'Or use local Codex CLI as the OpenAI backend:',
+    `- Run: codex login`,
+    `- Start Codex+ with: OPENAI_BACKEND=codex-cli`,
+    `- In Cursor: set Base URL to ${baseUrlForV1}/v1 and API key to "codex-cli"`,
     `Setup screenshot: ${baseUrl}/assets/setup.png`,
   ].join('\n')
 }
