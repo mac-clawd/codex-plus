@@ -3,7 +3,7 @@
  * Both use the same algorithm to find each other naturally.
  */
 
-const SERVICE_IDENTIFIER = 'sub-bridge'
+const SERVICE_IDENTIFIER = 'codex-plus'
 const DEFAULT_PORT = 8787
 const MAX_PORT_TRIES = 10
 
